@@ -1,0 +1,57 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI Build Status
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the main branch
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    container: guitar24t/ck-ros:latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+          cd /tmp
+          git clone https://github.com/frcteam195/ros-ci-helper.git
+          mkdir -p /tmp/_Robot/catkin_ws/src
+          cp -R $GITHUB_WORKSPACE /tmp/
+          /tmp/ros-ci-helper/fetch_ros_dependencies.sh $GITHUB_WORKSPACE/package.xml
+          find . -maxdepth 1 2>/dev/null | grep -v ^.$ | grep -e ".*_node" -e ".*_planner" | sed s:./::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ./{}/package.xml
+          find . -maxdepth 1 2>/dev/null | grep -v ^.$ | grep -e ".*_node" -e ".*_planner" | sed s:./::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ./{}/package.xml
+          find . -maxdepth 1 2>/dev/null | grep -v ^.$ | grep -e ".*_node" -e ".*_planner" | sed s:./::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ./{}/package.xml
+          find . -maxdepth 1 2>/dev/null | grep -v ^.$ | grep -e ".*_node" -e ".*_planner" | sed s:./::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ./{}/package.xml
+          find . -maxdepth 1 2>/dev/null | grep -v ^.$ | grep -e ".*_node" -e ".*_planner" | sed s:./::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ./{}/package.xml
+          find . -maxdepth 1 2>/dev/null | grep -v ^.$ | grep -e ".*_node" -e ".*_planner" | sed s:./::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ./{}/package.xml
+          cd /tmp/_Robot/catkin_ws/src
+          source /opt/ros/melodic/setup.bash
+          find ../../.. -maxdepth 1 2>/dev/null | grep -v ^../../..$ | grep -e ".*_node" -e ".*_planner" | sed s:../../../::g | xargs -I {} ln -s ../../../{} {}
+          mkdir -p /tmp/third_party_libs
+          cd /tmp/third_party_libs
+          find .. -maxdepth 1 2>/dev/null | grep -v ^..$ | grep -e ".*_node" -e ".*_planner" | sed s:../::g | xargs -I {} /tmp/ros-ci-helper/fetch_ros_dependencies.sh ../{}/package_third_party.xml
+          /tmp/ros-ci-helper/make_third_party_libs.sh
+          cd /tmp
+          cd /tmp/_Robot/catkin_ws
+          catkin_make -DROBOT_ARCHITECTURE_X86_64=TRUE -DCMAKE_CXX_FLAGS="-Werror -Wall -Wextra" -DCATKIN_ENABLE_TESTING=0
+        shell: bash
