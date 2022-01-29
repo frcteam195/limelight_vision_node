@@ -10,7 +10,7 @@ project(${PROJECT_NAME})
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rio_control_node)
+find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rio_control_node network_tables_node)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -66,11 +66,19 @@ find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rio_c
 #   Action2.action
 # )
 
+add_message_files(
+  FILES
+  Limelight_Info.msg
+  Limelight_Status.msg
+  Limelight.msg
+  Limelight_Control.msg
+)
+
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   std_msgs  # Or other packages containing msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  std_msgs  # Or other packages containing msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -106,7 +114,7 @@ catkin_package(
 #  LIBRARIES rio_control_node
 #  CATKIN_DEPENDS other_catkin_pkg
 #  DEPENDS system_lib
-  CATKIN_DEPENDS roscpp message_generation message_runtime rio_control_node
+  CATKIN_DEPENDS roscpp message_generation message_runtime rio_control_node network_tables_node
 )
 
 ###########

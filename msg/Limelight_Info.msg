@@ -1,0 +1,7 @@
+string name
+bool target_valid
+float64 target_dx_deg
+float64 target_dy_deg
+float64 target_area
+float64 target_skew
+float64 target_latency
