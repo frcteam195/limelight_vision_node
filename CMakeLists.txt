@@ -10,7 +10,7 @@ project(${PROJECT_NAME})
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rio_control_node network_tables_node)
+find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rio_control_node network_tables_node tf2 tf2_eigen tf2_geometry_msgs tf2_ros)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -114,17 +114,28 @@ catkin_package(
 #  LIBRARIES rio_control_node
 #  CATKIN_DEPENDS other_catkin_pkg
 #  DEPENDS system_lib
-  CATKIN_DEPENDS roscpp message_generation message_runtime rio_control_node network_tables_node
+  CATKIN_DEPENDS roscpp message_generation message_runtime rio_control_node network_tables_node tf2 tf2_ros
 )
 
 ###########
 ## Build ##
 ###########
 
+if (EXISTS "FindEigen3.cmake")
+  find_package(Eigen3 REQUIRED)
+  set(Eigen_INCLUDE_DIRS ${Eigen3_INCLUDE_DIRS})
+elseif (EXISTS "FindEigen.cmake")
+  find_package(Eigen REQUIRED)
+elseif (EXISTS "FindEigen.cmake")
+  message(WARNING "No findEigen cmake script found. You must provde one of them,
+  e.g. by adding it to ${PROJECT_SOURCE_DIR}/cmake_modules.")
+endif (EXISTS "FindEigen3.cmake")
+
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
 # include
+ ${Eigen_INCLUDE_DIRS}
  ${catkin_INCLUDE_DIRS}
  ${CMAKE_SOURCE_DIR}/../../../third_party_libs/ROSProtoDef2022/out
 )

@@ -9,6 +9,15 @@
 #include "limelight_vision_node/Limelight.h"
 #include "limelight_vision_node/Limelight_Control.h"
 
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2/LinearMath/Transform.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <angles/angles.h>
+#include <math.h>
+
 #include <thread>
 #include <string>
 #include <mutex>
@@ -19,8 +28,7 @@
 std::string ckgp(std::string instr)
 {
 	std::string retVal = ros::this_node::getName();
-	retVal += "/";
-	retVal += instr;
+	retVal += "/" + instr;
 	return retVal;
 }
 
@@ -30,7 +38,9 @@ ros::ServiceClient nt_getdouble_client;
 ros::ServiceClient nt_setdouble_client;
 std::mutex limelightMutex;
 std::vector<std::string> limelight_names;
-
+tf2_ros::TransformBroadcaster* tfBroadcaster;
+tf2_ros::Buffer tfBuffer;
+tf2_ros::TransformListener* tfListener;
 ros::ServiceClient& getNTGetDoubleSrv()
 {
 	if (!nt_getdouble_client)
@@ -88,11 +98,13 @@ void publish_limelight_data()
 					ntmsg.response.output = 0;
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_dx_deg = ntmsg.response.output;
+					double tx = angles::from_degrees(ntmsg.response.output);
 
 					ntmsg.request.entry_name = "ty";
 					ntmsg.response.output = 0;
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_dy_deg = ntmsg.response.output;
+					double ty = angles::from_degrees(ntmsg.response.output);
 
 					ntmsg.request.entry_name = "ta";
 					ntmsg.response.output = 0;
@@ -110,6 +122,57 @@ void publish_limelight_data()
 					limelightInfo.target_latency = ntmsg.response.output;
 
 					limelightStatus.limelights.push_back(limelightInfo);
+
+
+					//Publish tf2 transform for limelight to hub
+					std::string limelightFrameName = s + "_link";
+					tf2::Stamped<tf2::Transform> hubLinkStamped;
+					try
+					{
+						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightFrameName, ros::Time(0)), hubLinkStamped);
+					}
+					catch (tf2::TransformException &ex)
+					{
+						ROS_WARN("%s", ex.what());
+					}
+					//tf2Scalar distanceToHub = tf2::tf2Distance(tf2::Vector3(0, 0, 0), hubLinkStamped.getOrigin());
+					
+					geometry_msgs::TransformStamped transformStamped;
+
+					transformStamped.header.stamp = ros::Time::now();
+					transformStamped.header.frame_id = limelightFrameName;
+					transformStamped.child_frame_id = limelightFrameName + "_hub";
+
+					tf2::Vector3 x_axis = {1, 0, 0};
+					tf2::Vector3 y_axis = {0, 1, 0};
+					tf2::Vector3 z_axis = {0, 0, 1};
+					(void)x_axis;
+
+					tf2::Vector3 position;
+					position.setX(hubLinkStamped.getOrigin().length());
+
+					double pitch = atan2(sqrt(hubLinkStamped.getOrigin().getZ() * 
+					                               hubLinkStamped.getOrigin().getZ() + 
+												   hubLinkStamped.getOrigin().getX() * 
+												   hubLinkStamped.getOrigin().getX()), 
+										 hubLinkStamped.getOrigin().getY()) + M_PI;
+					
+					position.rotate(z_axis, tx);
+					position.rotate(y_axis, pitch);
+					(void)ty;
+
+					transformStamped.transform.translation.x = position.getX();
+					transformStamped.transform.translation.y = position.getY();
+					transformStamped.transform.translation.z = position.getZ();
+
+					tf2::Quaternion q;
+					q.setRPY(0, 0, 0);
+					transformStamped.transform.rotation.x = q.x();
+					transformStamped.transform.rotation.y = q.y();
+					transformStamped.transform.rotation.z = q.z();
+					transformStamped.transform.rotation.w = q.w();
+
+					tfBroadcaster->sendTransform(transformStamped);
 				}
 			}
 			limelight_pub.publish(limelightStatus);
@@ -175,6 +238,8 @@ int main(int argc, char **argv)
 
 	ros::NodeHandle n;
 	node = &n;
+	tfBroadcaster = new tf2_ros::TransformBroadcaster();
+	tfListener = new tf2_ros::TransformListener(tfBuffer);
 
 	bool required_params_found = true;
 	required_params_found &= n.getParam(CKSP(limelight_names), limelight_names);

@@ -33,6 +33,8 @@
   <!-- Examples: -->
   <!-- Use depend as a shortcut for packages that are both build and exec dependencies -->
     <depend>roscpp</depend>
+    <depend>tf2</depend>
+    <depend>tf2_ros</depend>
     <depend>network_tables_node</depend>
   <!--   Note that this is equivalent to the following: -->
   <!--   <build_depend>roscpp</build_depend> -->
@@ -40,6 +42,8 @@
   <!-- Use build_depend for packages you need at compile time: -->
     <build_depend>message_generation</build_depend>
     <build_depend>rio_control_node</build_depend>
+    <build_depend>tf2_eigen</build_depend>
+    <build_depend>tf2_geometry_msgs</build_depend>
   <!-- Use build_export_depend for packages you need in order to build against this package: -->
     <build_export_depend>message_generation</build_export_depend>
     <build_export_depend>rio_control_node</build_export_depend>
