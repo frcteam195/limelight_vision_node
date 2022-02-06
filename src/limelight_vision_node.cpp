@@ -97,14 +97,14 @@ void publish_limelight_data()
 					ntmsg.request.entry_name = "tx";
 					ntmsg.response.output = 0;
 					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_dx_deg = ntmsg.response.output;
-					double tx = angles::from_degrees(ntmsg.response.output);
+					limelightInfo.target_dx_deg = -ntmsg.response.output;
+					double tx = angles::from_degrees(-ntmsg.response.output);
 
 					ntmsg.request.entry_name = "ty";
 					ntmsg.response.output = 0;
 					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_dy_deg = ntmsg.response.output;
-					double ty = angles::from_degrees(ntmsg.response.output);
+					limelightInfo.target_dy_deg = -ntmsg.response.output;
+					double ty = angles::from_degrees(-ntmsg.response.output);
 
 					ntmsg.request.entry_name = "ta";
 					ntmsg.response.output = 0;
@@ -126,10 +126,13 @@ void publish_limelight_data()
 
 					//Publish tf2 transform for limelight to hub
 					std::string limelightFrameName = s + "_link";
+					std::string limelightUnalignedFrameName = s + "_unaligned";
 					tf2::Stamped<tf2::Transform> hubLinkStamped;
+					tf2::Stamped<tf2::Transform> limelightToLimelightUnalignedStamped;
 					try
 					{
-						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightFrameName, ros::Time(0)), hubLinkStamped);
+						tf2::convert(tfBuffer.lookupTransform(limelightFrameName, limelightUnalignedFrameName, ros::Time(0)), limelightToLimelightUnalignedStamped);
+						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hubLinkStamped);
 					}
 					catch (tf2::TransformException &ex)
 					{
@@ -140,26 +143,33 @@ void publish_limelight_data()
 					geometry_msgs::TransformStamped transformStamped;
 
 					transformStamped.header.stamp = ros::Time::now();
-					transformStamped.header.frame_id = limelightFrameName;
+					transformStamped.header.frame_id = limelightUnalignedFrameName;
 					transformStamped.child_frame_id = limelightFrameName + "_hub";
 
 					tf2::Vector3 x_axis = {1, 0, 0};
 					tf2::Vector3 y_axis = {0, 1, 0};
 					tf2::Vector3 z_axis = {0, 0, 1};
 					(void)x_axis;
+					(void)y_axis;
+					(void)z_axis;
 
-					tf2::Vector3 position;
-					position.setX(hubLinkStamped.getOrigin().length());
-
-					double pitch = atan2(sqrt(hubLinkStamped.getOrigin().getZ() * 
-					                               hubLinkStamped.getOrigin().getZ() + 
-												   hubLinkStamped.getOrigin().getX() * 
-												   hubLinkStamped.getOrigin().getX()), 
-										 hubLinkStamped.getOrigin().getY()) + M_PI;
+					tf2::Vector3 position(0, 0, 0);
+					//position.setX(hubLinkStamped.getOrigin().length());
+					position.setX(1);
 					
-					position.rotate(z_axis, tx);
-					position.rotate(y_axis, pitch);
+					position = position.rotate(z_axis, tx);
+					position = position.rotate(y_axis, ty);
 					(void)ty;
+
+					tf2::Matrix3x3 qM(limelightToLimelightUnalignedStamped.getRotation());
+
+					position = position * qM;
+
+					double questionable = hubLinkStamped.getOrigin().getZ();
+					double prevZ = position.getZ();
+					double hmmm = position.getZ()/std::fabs(hubLinkStamped.getOrigin().getZ());
+					position /= position.getZ()/std::fabs(hubLinkStamped.getOrigin().getZ());
+					double posLength = position.length();
 
 					transformStamped.transform.translation.x = position.getX();
 					transformStamped.transform.translation.y = position.getY();
@@ -173,6 +183,8 @@ void publish_limelight_data()
 					transformStamped.transform.rotation.w = q.w();
 
 					tfBroadcaster->sendTransform(transformStamped);
+
+					ROS_INFO("Limelight tx: %lf, ty: %lf, x: %lf, y: %lf, z: %lf, length: %lf, ques: %lf, prev: %lf, poslen: %lf, hmmm: %lf", tx, ty, position.getX(), position.getY(), position.getZ(), hubLinkStamped.getOrigin().length(), questionable, prevZ, posLength, hmmm);
 				}
 			}
 			limelight_pub.publish(limelightStatus);
