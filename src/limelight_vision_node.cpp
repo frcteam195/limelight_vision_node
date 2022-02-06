@@ -253,10 +253,11 @@ int main(int argc, char **argv)
 	getNTSetDoubleSrv();
 
 	std::thread limelightSendThread(publish_limelight_data);
-	ros::Subscriber limelightControl = node->subscribe("LimelightControl", 100, limelightControlCallback);
+	ros::Subscriber limelightControl = node->subscribe("/LimelightControl", 100, limelightControlCallback);
+
+	ros::spin();
 
 	limelightSendThread.join();
 
-	ros::spin();
 	return 0;
 }
