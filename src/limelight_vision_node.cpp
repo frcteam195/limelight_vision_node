@@ -129,15 +129,6 @@ void publish_limelight_data()
 					std::string limelightUnalignedFrameName = s + "_unaligned";
 					tf2::Stamped<tf2::Transform> hubLinkStamped;
 					tf2::Stamped<tf2::Transform> limelightToLimelightUnalignedStamped;
-					try
-					{
-						tf2::convert(tfBuffer.lookupTransform(limelightFrameName, limelightUnalignedFrameName, ros::Time(0)), limelightToLimelightUnalignedStamped);
-						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hubLinkStamped);
-					}
-					catch (tf2::TransformException &ex)
-					{
-						ROS_WARN("%s", ex.what());
-					}
 					//tf2Scalar distanceToHub = tf2::tf2Distance(tf2::Vector3(0, 0, 0), hubLinkStamped.getOrigin());
 					
 					geometry_msgs::TransformStamped transformStamped;
