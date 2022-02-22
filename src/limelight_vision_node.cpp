@@ -194,6 +194,9 @@ void publish_limelight_data()
 					{
 						try
 						{
+							tf2::Stamped<tf2::Transform> limelight_unaligned_to_base_link_transform;
+							tf2::convert(tfBuffer.lookupTransform(limelightUnalignedFrameName, "base_link", ros::Time(0)), limelight_unaligned_to_base_link_transform);
+
 							nav_msgs::Odometry odometry_data;
 							odometry_data.header.stamp = ros::Time::now();
 							odometry_data.header.frame_id = "hub_full_height";
@@ -203,8 +206,10 @@ void publish_limelight_data()
 							odometry_data.pose.pose.orientation.x = 0;
 							odometry_data.pose.pose.orientation.y = 0;
 							odometry_data.pose.pose.orientation.z = 0;
-							odometry_data.pose.pose.position.x = -transformStamped.transform.translation.x;
-							odometry_data.pose.pose.position.y = -transformStamped.transform.translation.y;
+							odometry_data.pose.pose.position.x = 
+							   -transformStamped.transform.translation.x + limelight_unaligned_to_base_link_transform.getOrigin().getX();
+							odometry_data.pose.pose.position.y = 
+							   -transformStamped.transform.translation.y + limelight_unaligned_to_base_link_transform.getOrigin().getY();
 							odometry_data.pose.pose.position.z = 0;
 
 							odometry_data.twist.twist.linear.x = 0;
