@@ -9,6 +9,7 @@
 #include "limelight_vision_node/Limelight.h"
 #include "limelight_vision_node/Limelight_Control.h"
 
+#include <nav_msgs/Odometry.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/LinearMath/Transform.h>
@@ -25,6 +26,9 @@
 
 #define STR_PARAM(s) #s
 #define CKSP(s) ckgp( STR_PARAM(s) )
+
+#define ENABLE_POSITION_PUBLISHING
+
 std::string ckgp(std::string instr)
 {
 	std::string retVal = ros::this_node::getName();
@@ -41,6 +45,7 @@ std::vector<std::string> limelight_names;
 tf2_ros::TransformBroadcaster* tfBroadcaster;
 tf2_ros::Buffer tfBuffer;
 tf2_ros::TransformListener* tfListener;
+
 ros::ServiceClient& getNTGetDoubleSrv()
 {
 	if (!nt_getdouble_client)
@@ -58,6 +63,8 @@ ros::ServiceClient& getNTSetDoubleSrv()
 	}
 	return nt_setdouble_client;
 }
+
+static bool enable_publish_position_data = false;
 
 void publish_limelight_data()
 {
@@ -129,8 +136,23 @@ void publish_limelight_data()
 					std::string limelightUnalignedFrameName = s + "_unaligned";
 					tf2::Stamped<tf2::Transform> hubLinkStamped;
 					tf2::Stamped<tf2::Transform> limelightToLimelightUnalignedStamped;
-					//tf2Scalar distanceToHub = tf2::tf2Distance(tf2::Vector3(0, 0, 0), hubLinkStamped.getOrigin());
 					
+					try
+					{
+						tf2::convert(tfBuffer.lookupTransform(limelightFrameName, limelightUnalignedFrameName, ros::Time(0)), limelightToLimelightUnalignedStamped);
+						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hubLinkStamped);
+					}
+					catch (tf2::TransformException &ex)
+					{
+						static int32_t warn_limiter = 1;
+						warn_limiter++;
+						warn_limiter = warn_limiter % 500;
+						if(warn_limiter == 0)
+						{
+							ROS_WARN("Warning - hub full height or limelight alignment frame not published yet");
+						}
+					}
+
 					geometry_msgs::TransformStamped transformStamped;
 
 					transformStamped.header.stamp = ros::Time::now();
@@ -145,8 +167,7 @@ void publish_limelight_data()
 					(void)z_axis;
 
 					tf2::Vector3 position(0, 0, 0);
-					//position.setX(hubLinkStamped.getOrigin().length());
-					position.setX(1);
+					position.setX(hubLinkStamped.getOrigin().length());
 					
 					position = position.rotate(z_axis, tx);
 					position = position.rotate(y_axis, ty);
@@ -155,12 +176,6 @@ void publish_limelight_data()
 					tf2::Matrix3x3 qM(limelightToLimelightUnalignedStamped.getRotation());
 
 					position = position * qM;
-
-					double questionable = hubLinkStamped.getOrigin().getZ();
-					double prevZ = position.getZ();
-					double hmmm = position.getZ()/std::fabs(hubLinkStamped.getOrigin().getZ());
-					position /= position.getZ()/std::fabs(hubLinkStamped.getOrigin().getZ());
-					double posLength = position.length();
 
 					transformStamped.transform.translation.x = position.getX();
 					transformStamped.transform.translation.y = position.getY();
@@ -175,7 +190,61 @@ void publish_limelight_data()
 
 					tfBroadcaster->sendTransform(transformStamped);
 
-					ROS_INFO("Limelight tx: %lf, ty: %lf, x: %lf, y: %lf, z: %lf, length: %lf, ques: %lf, prev: %lf, poslen: %lf, hmmm: %lf", tx, ty, position.getX(), position.getY(), position.getZ(), hubLinkStamped.getOrigin().length(), questionable, prevZ, posLength, hmmm);
+					if (enable_publish_position_data)
+					{
+						try
+						{
+							nav_msgs::Odometry odometry_data;
+							odometry_data.header.stamp = ros::Time::now();
+							odometry_data.header.frame_id = "hub_full_height";
+							odometry_data.child_frame_id = "base_link";
+
+							odometry_data.pose.pose.orientation.w = 0;
+							odometry_data.pose.pose.orientation.x = 0;
+							odometry_data.pose.pose.orientation.y = 0;
+							odometry_data.pose.pose.orientation.z = 0;
+							odometry_data.pose.pose.position.x = -transformStamped.transform.translation.x;
+							odometry_data.pose.pose.position.y = -transformStamped.transform.translation.y;
+							odometry_data.pose.pose.position.z = 0;
+
+							odometry_data.twist.twist.linear.x = 0;
+							odometry_data.twist.twist.linear.y = 0;
+							odometry_data.twist.twist.linear.z = 0;
+
+							odometry_data.twist.twist.angular.x = 0;
+							odometry_data.twist.twist.angular.y = 0;
+							odometry_data.twist.twist.angular.z = 0;
+
+							odometry_data.pose.covariance =
+							{   0.2, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.2, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
+
+							odometry_data.twist.covariance =
+							{   0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
+
+							static ros::Publisher odometry_publisher = node->advertise<nav_msgs::Odometry>("/LimelightOdometry", 1);
+							odometry_publisher.publish(odometry_data);
+						}
+						catch ( ... )
+						{
+							static int32_t warn_limiter = 1;
+							warn_limiter ++;
+							warn_limiter = warn_limiter % 500;
+							if (warn_limiter == 0)
+							{
+								ROS_WARN("Can't lookup limelight to baselink transform");
+							}
+						}
+					}
 				}
 			}
 			limelight_pub.publish(limelightStatus);
@@ -246,6 +315,7 @@ int main(int argc, char **argv)
 
 	bool required_params_found = true;
 	required_params_found &= n.getParam(CKSP(limelight_names), limelight_names);
+	required_params_found &= n.getParam(CKSP(enable_publish_position_data), enable_publish_position_data);
 	if (!required_params_found)
 	{
 		ROS_ERROR("Missing required parameters. Please check the list and make sure all required parameters are included");
