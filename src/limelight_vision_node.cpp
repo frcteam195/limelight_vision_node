@@ -141,6 +141,107 @@ void publish_limelight_data()
 					{
 						tf2::convert(tfBuffer.lookupTransform(limelightFrameName, limelightUnalignedFrameName, ros::Time(0)), limelightToLimelightUnalignedStamped);
 						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hubLinkStamped);
+
+						geometry_msgs::TransformStamped transformStamped;
+
+						transformStamped.header.stamp = ros::Time::now();
+						transformStamped.header.frame_id = limelightUnalignedFrameName;
+						transformStamped.child_frame_id = limelightFrameName + "_hub";
+
+						tf2::Vector3 x_axis = {1, 0, 0};
+						tf2::Vector3 y_axis = {0, 1, 0};
+						tf2::Vector3 z_axis = {0, 0, 1};
+						(void)x_axis;
+						(void)y_axis;
+						(void)z_axis;
+
+						tf2::Vector3 position(0, 0, 0);
+						position.setX(hubLinkStamped.getOrigin().length());
+						
+						position = position.rotate(z_axis, tx);
+						position = position.rotate(y_axis, ty);
+						(void)ty;
+
+						tf2::Matrix3x3 qM(limelightToLimelightUnalignedStamped.getRotation());
+
+						position = position * qM;
+
+						transformStamped.transform.translation.x = position.getX();
+						transformStamped.transform.translation.y = position.getY();
+						transformStamped.transform.translation.z = position.getZ();
+
+						tf2::Quaternion q;
+						q.setRPY(0, 0, 0);
+						transformStamped.transform.rotation.x = q.x();
+						transformStamped.transform.rotation.y = q.y();
+						transformStamped.transform.rotation.z = q.z();
+						transformStamped.transform.rotation.w = q.w();
+
+						tfBroadcaster->sendTransform(transformStamped);
+
+						if (enable_publish_position_data && limelightInfo.target_valid)
+						{
+							try
+							{
+								tf2::Stamped<tf2::Transform> hub_to_limelight_unaligned_through_robot_transform;
+								tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hub_to_limelight_unaligned_through_robot_transform);
+
+								nav_msgs::Odometry odometry_data;
+								odometry_data.header.stamp = ros::Time::now();
+								odometry_data.header.frame_id = "hub_full_height";
+								odometry_data.child_frame_id = "base_link";
+
+								tf2::Vector3 hub_to_limelight_unaligned_translation;
+								hub_to_limelight_unaligned_translation.setX(-transformStamped.transform.translation.x);
+								hub_to_limelight_unaligned_translation.setY(-transformStamped.transform.translation.y);
+								hub_to_limelight_unaligned_translation.setZ(-transformStamped.transform.translation.z);
+
+								tf2::Matrix3x3 rotation_matrix(hub_to_limelight_unaligned_through_robot_transform.inverse().getRotation());
+
+								tf2::Vector3 result_translation =  hub_to_limelight_unaligned_translation * rotation_matrix;
+
+								odometry_data.pose.pose.position.x = result_translation.getX();
+								odometry_data.pose.pose.position.y = result_translation.getY();
+								odometry_data.pose.pose.position.z = 0;
+
+								odometry_data.twist.twist.linear.x = 0;
+								odometry_data.twist.twist.linear.y = 0;
+								odometry_data.twist.twist.linear.z = 0;
+
+								odometry_data.twist.twist.angular.x = 0;
+								odometry_data.twist.twist.angular.y = 0;
+								odometry_data.twist.twist.angular.z = 0;
+
+								odometry_data.pose.covariance =
+								{   0.2, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.2, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
+
+								odometry_data.twist.covariance =
+								{   0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
+
+								static ros::Publisher odometry_publisher = node->advertise<nav_msgs::Odometry>("/LimelightOdometry", 1);
+								odometry_publisher.publish(odometry_data);
+							}
+							catch ( ... )
+							{
+								static int32_t warn_limiter = 1;
+								warn_limiter ++;
+								warn_limiter = warn_limiter % 500;
+								if (warn_limiter == 0)
+								{
+									ROS_WARN("Can't lookup limelight to baselink transform");
+								}
+							}
+						}
 					}
 					catch (tf2::TransformException &ex)
 					{
@@ -150,104 +251,6 @@ void publish_limelight_data()
 						if(warn_limiter == 0)
 						{
 							ROS_WARN("Warning - hub full height or limelight alignment frame not published yet");
-						}
-					}
-
-					geometry_msgs::TransformStamped transformStamped;
-
-					transformStamped.header.stamp = ros::Time::now();
-					transformStamped.header.frame_id = limelightUnalignedFrameName;
-					transformStamped.child_frame_id = limelightFrameName + "_hub";
-
-					tf2::Vector3 x_axis = {1, 0, 0};
-					tf2::Vector3 y_axis = {0, 1, 0};
-					tf2::Vector3 z_axis = {0, 0, 1};
-					(void)x_axis;
-					(void)y_axis;
-					(void)z_axis;
-
-					tf2::Vector3 position(0, 0, 0);
-					position.setX(hubLinkStamped.getOrigin().length());
-					
-					position = position.rotate(z_axis, tx);
-					position = position.rotate(y_axis, ty);
-					(void)ty;
-
-					tf2::Matrix3x3 qM(limelightToLimelightUnalignedStamped.getRotation());
-
-					position = position * qM;
-
-					transformStamped.transform.translation.x = position.getX();
-					transformStamped.transform.translation.y = position.getY();
-					transformStamped.transform.translation.z = position.getZ();
-
-					tf2::Quaternion q;
-					q.setRPY(0, 0, 0);
-					transformStamped.transform.rotation.x = q.x();
-					transformStamped.transform.rotation.y = q.y();
-					transformStamped.transform.rotation.z = q.z();
-					transformStamped.transform.rotation.w = q.w();
-
-					tfBroadcaster->sendTransform(transformStamped);
-
-					if (enable_publish_position_data)
-					{
-						try
-						{
-							tf2::Stamped<tf2::Transform> limelight_unaligned_to_base_link_transform;
-							tf2::convert(tfBuffer.lookupTransform(limelightUnalignedFrameName, "base_link", ros::Time(0)), limelight_unaligned_to_base_link_transform);
-
-							nav_msgs::Odometry odometry_data;
-							odometry_data.header.stamp = ros::Time::now();
-							odometry_data.header.frame_id = "hub_full_height";
-							odometry_data.child_frame_id = "base_link";
-
-							odometry_data.pose.pose.orientation.w = 0;
-							odometry_data.pose.pose.orientation.x = 0;
-							odometry_data.pose.pose.orientation.y = 0;
-							odometry_data.pose.pose.orientation.z = 0;
-							odometry_data.pose.pose.position.x = 
-							   -transformStamped.transform.translation.x + limelight_unaligned_to_base_link_transform.getOrigin().getX();
-							odometry_data.pose.pose.position.y = 
-							   -transformStamped.transform.translation.y + limelight_unaligned_to_base_link_transform.getOrigin().getY();
-							odometry_data.pose.pose.position.z = 0;
-
-							odometry_data.twist.twist.linear.x = 0;
-							odometry_data.twist.twist.linear.y = 0;
-							odometry_data.twist.twist.linear.z = 0;
-
-							odometry_data.twist.twist.angular.x = 0;
-							odometry_data.twist.twist.angular.y = 0;
-							odometry_data.twist.twist.angular.z = 0;
-
-							odometry_data.pose.covariance =
-							{   0.2, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.2, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
-
-							odometry_data.twist.covariance =
-							{   0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
-
-							static ros::Publisher odometry_publisher = node->advertise<nav_msgs::Odometry>("/LimelightOdometry", 1);
-							odometry_publisher.publish(odometry_data);
-						}
-						catch ( ... )
-						{
-							static int32_t warn_limiter = 1;
-							warn_limiter ++;
-							warn_limiter = warn_limiter % 500;
-							if (warn_limiter == 0)
-							{
-								ROS_WARN("Can't lookup limelight to baselink transform");
-							}
 						}
 					}
 				}
