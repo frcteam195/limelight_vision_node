@@ -95,44 +95,55 @@ void publish_limelight_data()
 
 					limelight_vision_node::Limelight_Info limelightInfo;
 					limelightInfo.name = s;
+
+					bool limelight_data_valid = false;
+					const double timeout = 0.2;
 					
 					ntmsg.request.entry_name = "tv";
 					ntmsg.response.output = 0;
 					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_valid = ntmsg.response.output > 0 ? true : false;
-					std::stringstream ss;
-					ss << "Test: " << ros::Time::now() << " : " << ntmsg.response.last_valid;
-					ROS_INFO("%s", ss.str().c_str());
-					limelightInfo.target_valid = limelightInfo.target_valid && ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(0.2));
+					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
 					ntmsg.request.entry_name = "tx";
 					ntmsg.response.output = 0;
+					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_dx_deg = -ntmsg.response.output;
 					double tx = angles::from_degrees(-ntmsg.response.output);
+					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
 					ntmsg.request.entry_name = "ty";
 					ntmsg.response.output = 0;
+					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_dy_deg = -ntmsg.response.output;
 					double ty = angles::from_degrees(-ntmsg.response.output);
+					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
 					ntmsg.request.entry_name = "ta";
 					ntmsg.response.output = 0;
+					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_area = ntmsg.response.output;
+					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
 					ntmsg.request.entry_name = "ts";
 					ntmsg.response.output = 0;
+					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_skew = ntmsg.response.output;
+					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
 					ntmsg.request.entry_name = "tl";
 					ntmsg.response.output = 0;
+					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_latency = ntmsg.response.output;
+					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
+					limelightInfo.target_valid &= limelight_data_valid;
 					limelightStatus.limelights.push_back(limelightInfo);
 
 
