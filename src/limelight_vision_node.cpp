@@ -98,8 +98,13 @@ void publish_limelight_data()
 					
 					ntmsg.request.entry_name = "tv";
 					ntmsg.response.output = 0;
+					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_valid = ntmsg.response.output > 0 ? true : false;
+					std::stringstream ss;
+					ss << "Test: " << ros::Time::now() << " : " << ntmsg.response.last_valid;
+					ROS_INFO("%s", ss.str().c_str());
+					limelightInfo.target_valid = limelightInfo.target_valid && ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(0.2));
 
 					ntmsg.request.entry_name = "tx";
 					ntmsg.response.output = 0;
