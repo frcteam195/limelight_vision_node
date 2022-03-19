@@ -15,6 +15,7 @@
 #include <tf2/LinearMath/Transform.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <rio_control_node/Robot_Status.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <angles/angles.h>
 #include <math.h>
@@ -28,6 +29,8 @@
 #define CKSP(s) ckgp( STR_PARAM(s) )
 
 #define ENABLE_POSITION_PUBLISHING
+
+// #define ODOMETRY_ONLY_AUTO
 
 std::string ckgp(std::string instr)
 {
@@ -45,6 +48,36 @@ std::vector<std::string> limelight_names;
 tf2_ros::TransformBroadcaster* tfBroadcaster;
 tf2_ros::Buffer tfBuffer;
 tf2_ros::TransformListener* tfListener;
+
+enum class RobotState
+{
+	DISABLED,
+	AUTONOMOUS,
+	TELEOP,
+	TEST,
+};
+
+static RobotState robot_state = RobotState::DISABLED;
+
+void robot_status_callback(const rio_control_node::Robot_Status &msg)
+{
+	if (msg.robot_state == rio_control_node::Robot_Status::AUTONOMOUS)
+	{
+		robot_state = RobotState::AUTONOMOUS;
+	}
+	else if (msg.robot_state == rio_control_node::Robot_Status::DISABLED)
+	{
+		robot_state = RobotState::DISABLED;
+	}
+	else if (msg.robot_state == rio_control_node::Robot_Status::TEST)
+	{
+		robot_state = RobotState::TEST;
+	}
+	else if (msg.robot_state == rio_control_node::Robot_Status::TELEOP)
+	{
+		robot_state = RobotState::TELEOP;
+	}
+}
 
 ros::ServiceClient& getNTGetDoubleSrv()
 {
@@ -245,7 +278,13 @@ void publish_limelight_data()
 									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
 
 								static ros::Publisher odometry_publisher = node->advertise<nav_msgs::Odometry>("/LimelightOdometry", 1);
+#ifdef ODOMETRY_ONLY_AUTO
+								if (robot_state == RobotState::TELEOP) {
+#endif
 								odometry_publisher.publish(odometry_data);
+#ifdef ODOMETRY_ONLY_AUTO
+								}
+#endif
 							}
 							catch ( ... )
 							{
@@ -351,6 +390,7 @@ int main(int argc, char **argv)
 
 	std::thread limelightSendThread(publish_limelight_data);
 	ros::Subscriber limelightControl = node->subscribe("/LimelightControl", 100, limelightControlCallback);
+	ros::Subscriber robot_status_subscriber = node->subscribe("/RobotStatus", 100, robot_status_callback);
 
 	ros::spin();
 
