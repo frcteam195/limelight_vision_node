@@ -20,6 +20,8 @@
 #include <angles/angles.h>
 #include <math.h>
 
+#include "ck_utilities/MovingAverage.hpp"
+
 #include <thread>
 #include <string>
 #include <mutex>
@@ -144,7 +146,7 @@ void publish_limelight_data()
 					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_dx_deg = -ntmsg.response.output;
-					double tx = angles::from_degrees(-ntmsg.response.output);
+					double temp_tx = angles::from_degrees(-ntmsg.response.output);
 					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
 
 					ntmsg.request.entry_name = "ty";
@@ -152,8 +154,21 @@ void publish_limelight_data()
 					ntmsg.response.last_valid = ros::Time(0);
 					nt_getdouble_localclient.call(ntmsg);
 					limelightInfo.target_dy_deg = -ntmsg.response.output;
-					double ty = angles::from_degrees(-ntmsg.response.output);
+					double temp_ty = angles::from_degrees(-ntmsg.response.output);
 					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
+
+					double tx = temp_ty;
+					double ty = -temp_tx;
+
+
+					static ck::MovingAverage txAverage(10);
+					static ck::MovingAverage tyAverage(10);
+
+					txAverage.addSample(tx);
+					tx = txAverage.getAverage();
+
+					tyAverage.addSample(ty);
+					ty = tyAverage.getAverage();
 
 					ntmsg.request.entry_name = "ta";
 					ntmsg.response.output = 0;
@@ -205,7 +220,7 @@ void publish_limelight_data()
 						(void)z_axis;
 
 						tf2::Vector3 position(0, 0, 0);
-						position.setX(hubLinkStamped.getOrigin().length());
+						position.setX(hubLinkStamped.getOrigin().length() + (24 * 0.0254));
 						
 						position = position.rotate(z_axis, tx);
 						position = position.rotate(y_axis, ty);

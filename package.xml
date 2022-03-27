@@ -44,9 +44,12 @@
     <build_depend>rio_control_node</build_depend>
     <build_depend>tf2_eigen</build_depend>
     <build_depend>tf2_geometry_msgs</build_depend>
+    <build_depend>ck_utilities_node</build_depend>
   <!-- Use build_export_depend for packages you need in order to build against this package: -->
     <build_export_depend>message_generation</build_export_depend>
     <build_export_depend>rio_control_node</build_export_depend>
+    <build_export_depend>ck_utilities_node</build_export_depend>
+
   <!-- Use buildtool_depend for build tool packages: -->
   <!--   <buildtool_depend>catkin</buildtool_depend> -->
   <!-- Use exec_depend for packages you need at runtime: -->
