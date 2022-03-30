@@ -1,9 +1,6 @@
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 
-#include "network_tables_node/NTGetDouble.h"
-#include "network_tables_node/NTSetDouble.h"
-
 #include "limelight_vision_node/Limelight_Info.h"
 #include "limelight_vision_node/Limelight_Status.h"
 #include "limelight_vision_node/Limelight.h"
@@ -21,6 +18,7 @@
 #include <math.h>
 
 #include "ck_utilities/MovingAverage.hpp"
+#include "ck_utilities/NTHelper.hpp"
 
 #include <thread>
 #include <string>
@@ -43,8 +41,6 @@ std::string ckgp(std::string instr)
 
 
 ros::NodeHandle* node;
-ros::ServiceClient nt_getdouble_client;
-ros::ServiceClient nt_setdouble_client;
 std::mutex limelightMutex;
 std::vector<std::string> limelight_names;
 tf2_ros::TransformBroadcaster* tfBroadcaster;
@@ -81,25 +77,12 @@ void robot_status_callback(const rio_control_node::Robot_Status &msg)
 	}
 }
 
-ros::ServiceClient& getNTGetDoubleSrv()
-{
-	if (!nt_getdouble_client)
-	{
-		nt_getdouble_client = node->serviceClient<network_tables_node::NTGetDouble>("nt_getdouble", true);
-	}
-	return nt_getdouble_client;
-}
-
-ros::ServiceClient& getNTSetDoubleSrv()
-{
-	if (!nt_setdouble_client)
-	{
-		nt_setdouble_client = node->serviceClient<network_tables_node::NTSetDouble>("nt_setdouble", true);
-	}
-	return nt_setdouble_client;
-}
-
 static bool enable_publish_position_data = false;
+
+inline bool time_not_timed_out(ros::Time& checkedTime, const double& timeout)
+{
+	return ((ros::Time::now() - checkedTime) < ros::Duration(timeout));
+}
 
 void publish_limelight_data()
 {
@@ -119,209 +102,184 @@ void publish_limelight_data()
 		{
 			std::lock_guard<std::mutex> lock(limelightMutex);
 			limelightStatus.limelights.clear();
-			ros::ServiceClient& nt_getdouble_localclient = getNTGetDoubleSrv();
-			if (nt_getdouble_localclient)
+			for (const std::string& s : limelight_names)
 			{
-				for (const std::string& s : limelight_names)
+				ros::Time response_time(0);
+				limelight_vision_node::Limelight_Info limelightInfo;
+				limelightInfo.name = s;
+
+				double default_val = 0;
+				bool limelight_data_valid = false;
+				const double timeout = 0.2;
+				
+				double tv = 0;
+				ck::nt::get(tv, response_time, s, "tv", default_val);
+				limelightInfo.target_valid = tv > 0 ? true : false;
+				limelight_data_valid |= time_not_timed_out(response_time, timeout);
+
+				ck::nt::get(limelightInfo.target_dx_deg, response_time, s, "tx", default_val);
+				limelightInfo.target_dx_deg = -limelightInfo.target_dx_deg;
+				double temp_tx = angles::from_degrees(limelightInfo.target_dx_deg);
+				limelight_data_valid |= time_not_timed_out(response_time, timeout);
+
+				ck::nt::get(limelightInfo.target_dy_deg, response_time, s, "ty", default_val);
+				limelightInfo.target_dy_deg = -limelightInfo.target_dy_deg;
+				double temp_ty = angles::from_degrees(limelightInfo.target_dy_deg);
+				limelight_data_valid |= time_not_timed_out(response_time, timeout);
+
+				double tx = temp_ty;
+				double ty = -temp_tx;
+
+
+				static ck::MovingAverage txAverage(10);
+				static ck::MovingAverage tyAverage(10);
+
+				txAverage.addSample(tx);
+				tx = txAverage.getAverage();
+
+				tyAverage.addSample(ty);
+				ty = tyAverage.getAverage();
+
+
+				ck::nt::get(limelightInfo.target_area, response_time, s, "ta", default_val);
+				limelight_data_valid |= time_not_timed_out(response_time, timeout);
+
+				ck::nt::get(limelightInfo.target_skew, response_time, s, "ts", default_val);
+				limelight_data_valid |= time_not_timed_out(response_time, timeout);
+
+				ck::nt::get(limelightInfo.target_latency, response_time, s, "tl", default_val);
+				limelight_data_valid |= time_not_timed_out(response_time, timeout);
+
+				limelightInfo.target_valid &= limelight_data_valid;
+				limelightStatus.limelights.push_back(limelightInfo);
+
+
+				//Publish tf2 transform for limelight to hub
+				std::string limelightFrameName = s + "_link";
+				std::string limelightUnalignedFrameName = s + "_unaligned";
+				tf2::Stamped<tf2::Transform> hubLinkStamped;
+				tf2::Stamped<tf2::Transform> limelightToLimelightUnalignedStamped;
+				
+				try
 				{
-					network_tables_node::NTGetDouble ntmsg;
-					ntmsg.request.table_name = s;
-					ntmsg.request.default_value = 0;
+					tf2::convert(tfBuffer.lookupTransform(limelightFrameName, limelightUnalignedFrameName, ros::Time(0)), limelightToLimelightUnalignedStamped);
+					tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hubLinkStamped);
 
-					limelight_vision_node::Limelight_Info limelightInfo;
-					limelightInfo.name = s;
+					geometry_msgs::TransformStamped transformStamped;
 
-					bool limelight_data_valid = false;
-					const double timeout = 0.2;
+					transformStamped.header.stamp = ros::Time::now();
+					transformStamped.header.frame_id = limelightUnalignedFrameName;
+					transformStamped.child_frame_id = limelightFrameName + "_hub";
+
+					tf2::Vector3 x_axis = {1, 0, 0};
+					tf2::Vector3 y_axis = {0, 1, 0};
+					tf2::Vector3 z_axis = {0, 0, 1};
+					(void)x_axis;
+					(void)y_axis;
+					(void)z_axis;
+
+					tf2::Vector3 position(0, 0, 0);
+					position.setX(hubLinkStamped.getOrigin().length() + (24 * 0.0254));
 					
-					ntmsg.request.entry_name = "tv";
-					ntmsg.response.output = 0;
-					ntmsg.response.last_valid = ros::Time(0);
-					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_valid = ntmsg.response.output > 0 ? true : false;
-					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
+					position = position.rotate(z_axis, tx);
+					position = position.rotate(y_axis, ty);
+					(void)ty;
 
-					ntmsg.request.entry_name = "tx";
-					ntmsg.response.output = 0;
-					ntmsg.response.last_valid = ros::Time(0);
-					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_dx_deg = -ntmsg.response.output;
-					double temp_tx = angles::from_degrees(-ntmsg.response.output);
-					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
+					tf2::Matrix3x3 qM(limelightToLimelightUnalignedStamped.getRotation());
 
-					ntmsg.request.entry_name = "ty";
-					ntmsg.response.output = 0;
-					ntmsg.response.last_valid = ros::Time(0);
-					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_dy_deg = -ntmsg.response.output;
-					double temp_ty = angles::from_degrees(-ntmsg.response.output);
-					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
+					position = position * qM;
 
-					double tx = temp_ty;
-					double ty = -temp_tx;
+					transformStamped.transform.translation.x = position.getX();
+					transformStamped.transform.translation.y = position.getY();
+					transformStamped.transform.translation.z = position.getZ();
 
+					tf2::Quaternion q;
+					q.setRPY(0, 0, 0);
+					transformStamped.transform.rotation.x = q.x();
+					transformStamped.transform.rotation.y = q.y();
+					transformStamped.transform.rotation.z = q.z();
+					transformStamped.transform.rotation.w = q.w();
 
-					static ck::MovingAverage txAverage(10);
-					static ck::MovingAverage tyAverage(10);
+					tfBroadcaster->sendTransform(transformStamped);
 
-					txAverage.addSample(tx);
-					tx = txAverage.getAverage();
-
-					tyAverage.addSample(ty);
-					ty = tyAverage.getAverage();
-
-					ntmsg.request.entry_name = "ta";
-					ntmsg.response.output = 0;
-					ntmsg.response.last_valid = ros::Time(0);
-					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_area = ntmsg.response.output;
-					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
-
-					ntmsg.request.entry_name = "ts";
-					ntmsg.response.output = 0;
-					ntmsg.response.last_valid = ros::Time(0);
-					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_skew = ntmsg.response.output;
-					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
-
-					ntmsg.request.entry_name = "tl";
-					ntmsg.response.output = 0;
-					ntmsg.response.last_valid = ros::Time(0);
-					nt_getdouble_localclient.call(ntmsg);
-					limelightInfo.target_latency = ntmsg.response.output;
-					limelight_data_valid |= ((ros::Time::now() - ntmsg.response.last_valid) < ros::Duration(timeout));
-
-					limelightInfo.target_valid &= limelight_data_valid;
-					limelightStatus.limelights.push_back(limelightInfo);
-
-
-					//Publish tf2 transform for limelight to hub
-					std::string limelightFrameName = s + "_link";
-					std::string limelightUnalignedFrameName = s + "_unaligned";
-					tf2::Stamped<tf2::Transform> hubLinkStamped;
-					tf2::Stamped<tf2::Transform> limelightToLimelightUnalignedStamped;
-					
-					try
+					if (enable_publish_position_data && limelightInfo.target_valid)
 					{
-						tf2::convert(tfBuffer.lookupTransform(limelightFrameName, limelightUnalignedFrameName, ros::Time(0)), limelightToLimelightUnalignedStamped);
-						tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hubLinkStamped);
-
-						geometry_msgs::TransformStamped transformStamped;
-
-						transformStamped.header.stamp = ros::Time::now();
-						transformStamped.header.frame_id = limelightUnalignedFrameName;
-						transformStamped.child_frame_id = limelightFrameName + "_hub";
-
-						tf2::Vector3 x_axis = {1, 0, 0};
-						tf2::Vector3 y_axis = {0, 1, 0};
-						tf2::Vector3 z_axis = {0, 0, 1};
-						(void)x_axis;
-						(void)y_axis;
-						(void)z_axis;
-
-						tf2::Vector3 position(0, 0, 0);
-						position.setX(hubLinkStamped.getOrigin().length() + (24 * 0.0254));
-						
-						position = position.rotate(z_axis, tx);
-						position = position.rotate(y_axis, ty);
-						(void)ty;
-
-						tf2::Matrix3x3 qM(limelightToLimelightUnalignedStamped.getRotation());
-
-						position = position * qM;
-
-						transformStamped.transform.translation.x = position.getX();
-						transformStamped.transform.translation.y = position.getY();
-						transformStamped.transform.translation.z = position.getZ();
-
-						tf2::Quaternion q;
-						q.setRPY(0, 0, 0);
-						transformStamped.transform.rotation.x = q.x();
-						transformStamped.transform.rotation.y = q.y();
-						transformStamped.transform.rotation.z = q.z();
-						transformStamped.transform.rotation.w = q.w();
-
-						tfBroadcaster->sendTransform(transformStamped);
-
-						if (enable_publish_position_data && limelightInfo.target_valid)
+						try
 						{
-							try
-							{
-								tf2::Stamped<tf2::Transform> hub_to_limelight_unaligned_through_robot_transform;
-								tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hub_to_limelight_unaligned_through_robot_transform);
+							tf2::Stamped<tf2::Transform> hub_to_limelight_unaligned_through_robot_transform;
+							tf2::convert(tfBuffer.lookupTransform("hub_full_height", limelightUnalignedFrameName, ros::Time(0)), hub_to_limelight_unaligned_through_robot_transform);
 
-								nav_msgs::Odometry odometry_data;
-								odometry_data.header.stamp = ros::Time::now();
-								odometry_data.header.frame_id = "hub_full_height";
-								odometry_data.child_frame_id = "base_link";
+							nav_msgs::Odometry odometry_data;
+							odometry_data.header.stamp = ros::Time::now();
+							odometry_data.header.frame_id = "hub_full_height";
+							odometry_data.child_frame_id = "base_link";
 
-								tf2::Vector3 hub_to_limelight_unaligned_translation;
-								hub_to_limelight_unaligned_translation.setX(-transformStamped.transform.translation.x);
-								hub_to_limelight_unaligned_translation.setY(-transformStamped.transform.translation.y);
-								hub_to_limelight_unaligned_translation.setZ(-transformStamped.transform.translation.z);
+							tf2::Vector3 hub_to_limelight_unaligned_translation;
+							hub_to_limelight_unaligned_translation.setX(-transformStamped.transform.translation.x);
+							hub_to_limelight_unaligned_translation.setY(-transformStamped.transform.translation.y);
+							hub_to_limelight_unaligned_translation.setZ(-transformStamped.transform.translation.z);
 
-								tf2::Matrix3x3 rotation_matrix(hub_to_limelight_unaligned_through_robot_transform.inverse().getRotation());
+							tf2::Matrix3x3 rotation_matrix(hub_to_limelight_unaligned_through_robot_transform.inverse().getRotation());
 
-								tf2::Vector3 result_translation =  hub_to_limelight_unaligned_translation * rotation_matrix;
+							tf2::Vector3 result_translation =  hub_to_limelight_unaligned_translation * rotation_matrix;
 
-								odometry_data.pose.pose.position.x = result_translation.getX();
-								odometry_data.pose.pose.position.y = result_translation.getY();
-								odometry_data.pose.pose.position.z = 0;
+							odometry_data.pose.pose.position.x = result_translation.getX();
+							odometry_data.pose.pose.position.y = result_translation.getY();
+							odometry_data.pose.pose.position.z = 0;
 
-								odometry_data.twist.twist.linear.x = 0;
-								odometry_data.twist.twist.linear.y = 0;
-								odometry_data.twist.twist.linear.z = 0;
+							odometry_data.twist.twist.linear.x = 0;
+							odometry_data.twist.twist.linear.y = 0;
+							odometry_data.twist.twist.linear.z = 0;
 
-								odometry_data.twist.twist.angular.x = 0;
-								odometry_data.twist.twist.angular.y = 0;
-								odometry_data.twist.twist.angular.z = 0;
+							odometry_data.twist.twist.angular.x = 0;
+							odometry_data.twist.twist.angular.y = 0;
+							odometry_data.twist.twist.angular.z = 0;
 
-								odometry_data.pose.covariance =
-								{   0.2, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.2, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
+							odometry_data.pose.covariance =
+							{   0.2, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.2, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
 
-								odometry_data.twist.covariance =
-								{   0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-									0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
+							odometry_data.twist.covariance =
+							{   0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+								0.0, 0.0, 0.0, 0.0, 0.0, 0.0,};
 
-								static ros::Publisher odometry_publisher = node->advertise<nav_msgs::Odometry>("/LimelightOdometry", 1);
+							static ros::Publisher odometry_publisher = node->advertise<nav_msgs::Odometry>("/LimelightOdometry", 1);
 #ifdef ODOMETRY_ONLY_AUTO
-								if (robot_state == RobotState::TELEOP) {
+							if (robot_state == RobotState::TELEOP) {
 #endif
-								odometry_publisher.publish(odometry_data);
+							odometry_publisher.publish(odometry_data);
 #ifdef ODOMETRY_ONLY_AUTO
-								}
-#endif
 							}
-							catch ( ... )
+#endif
+						}
+						catch ( ... )
+						{
+							static int32_t warn_limiter = 1;
+							warn_limiter ++;
+							warn_limiter = warn_limiter % 500;
+							if (warn_limiter == 0)
 							{
-								static int32_t warn_limiter = 1;
-								warn_limiter ++;
-								warn_limiter = warn_limiter % 500;
-								if (warn_limiter == 0)
-								{
-									ROS_WARN("Can't lookup limelight to baselink transform");
-								}
+								ROS_WARN("Can't lookup limelight to baselink transform");
 							}
 						}
 					}
-					catch (tf2::TransformException &ex)
+				}
+				catch (tf2::TransformException &ex)
+				{
+					static int32_t warn_limiter = 1;
+					warn_limiter++;
+					warn_limiter = warn_limiter % 500;
+					if(warn_limiter == 0)
 					{
-						static int32_t warn_limiter = 1;
-						warn_limiter++;
-						warn_limiter = warn_limiter % 500;
-						if(warn_limiter == 0)
-						{
-							ROS_WARN("Warning - hub full height or limelight alignment frame not published yet");
-						}
+						ROS_WARN("Warning - hub full height or limelight alignment frame not published yet");
 					}
 				}
 			}
@@ -334,40 +292,18 @@ void publish_limelight_data()
 
 void limelightControlCallback(const limelight_vision_node::Limelight_Control& msg)
 {
-	ros::ServiceClient& nt_setdouble_localclient = getNTSetDoubleSrv();
-	if (nt_setdouble_localclient)
+	for (const limelight_vision_node::Limelight& ll : msg.limelights)
 	{
-		for (const limelight_vision_node::Limelight& ll : msg.limelights)
+		bool setSuccess = true;
+		setSuccess &= ck::nt::set(ll.name, "ledMode", ll.ledMode);
+		setSuccess &= ck::nt::set(ll.name, "camMode", ll.camMode);
+		setSuccess &= ck::nt::set(ll.name, "pipeline", ll.pipeline);
+		setSuccess &= ck::nt::set(ll.name, "stream", ll.stream);
+		setSuccess &= ck::nt::set(ll.name, "snapshot", ll.snapshot);
+
+		if (!setSuccess)
 		{
-			bool setSuccess = true;
-
-			network_tables_node::NTSetDouble ntmsg;
-			ntmsg.request.table_name = ll.name;
-
-			ntmsg.request.entry_name = "ledMode";
-			ntmsg.request.value = ll.ledMode;
-			setSuccess &= nt_setdouble_localclient.call(ntmsg);
-
-			ntmsg.request.entry_name = "camMode";
-			ntmsg.request.value = ll.camMode;
-			setSuccess &= nt_setdouble_localclient.call(ntmsg);
-
-			ntmsg.request.entry_name = "pipeline";
-			ntmsg.request.value = ll.pipeline;
-			setSuccess &= nt_setdouble_localclient.call(ntmsg);
-
-			ntmsg.request.entry_name = "stream";
-			ntmsg.request.value = ll.stream;
-			setSuccess &= nt_setdouble_localclient.call(ntmsg);
-
-			ntmsg.request.entry_name = "snapshot";
-			ntmsg.request.value = ll.snapshot;
-			setSuccess &= nt_setdouble_localclient.call(ntmsg);
-
-			if (!setSuccess)
-			{
-				ROS_WARN("Failed to set values for limelight: %s", ll.name.c_str());
-			}
+			ROS_WARN("Failed to set values for limelight: %s", ll.name.c_str());
 		}
 	}
 }
@@ -399,9 +335,6 @@ int main(int argc, char **argv)
 		ROS_ERROR("Missing required parameters for node %s. Please check the list and make sure all required parameters are included", ros::this_node::getName().c_str());
 		return 1;
 	}
-
-	getNTGetDoubleSrv();
-	getNTSetDoubleSrv();
 
 	std::thread limelightSendThread(publish_limelight_data);
 	ros::Subscriber limelightControl = node->subscribe("/LimelightControl", 100, limelightControlCallback);
