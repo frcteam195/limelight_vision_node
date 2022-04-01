@@ -30,7 +30,7 @@
 
 #define ENABLE_POSITION_PUBLISHING
 
-// #define ODOMETRY_ONLY_AUTO
+#define ODOMETRY_ONLY_AUTO
 
 std::string ckgp(std::string instr)
 {
